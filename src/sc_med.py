@@ -18,6 +18,7 @@ class BaseMedScrape:
     Bopomofo links -> Medicine links -> Medicine data
     '''
     
+
     def __init__(self, med_type: str) -> None:
         '''med_type: "yao" or "fang"'''
         self.temp_file = Path('./json/temp.json') # Handy...
@@ -27,10 +28,9 @@ class BaseMedScrape:
     
     
     def get_html(self, url: str) -> str:
-        html = self._session.get(url)
-        print(html)
+        response = self._session.get(url)
         self._session.close()
-        return html.content
+        return response.content
     
 
     def get_bopomofo_links(self, dst: Path) -> None:
@@ -69,11 +69,15 @@ class BaseMedScrape:
         assert soup is not None,  'Err: Could not find the Webpage!'
         assert links != False, 'Err: No links!'
 
+
     def get_med_data(self) -> Dict[str, str]:
         '''Get medicine data'''
         pass
 
+
 class ScFangMedicine(BaseMedScrape):
+
+
     def __init__(self) -> None:
         super().__init__('fang')
         self.fang_med_links_file = Path('./json/fang_med_links.json')
@@ -114,6 +118,7 @@ class ScFangMedicine(BaseMedScrape):
         if not bop_links: # Empty
             self.get_bopomofo_links(self.fang_bop_links_file)
             bop_links = JsonHandler(self.fang_bop_links_file).read()
+        
         for key, val in bop_links.items():
             self.get_med_links(self.fang_med_links_file, key, val)
             
@@ -132,7 +137,8 @@ class ScFangMedicine(BaseMedScrape):
                         time.sleep(random.randint(20,60))
                     WAIT_FOR_THIS += 1
                 JsonHandler(self.fang_data_file).update(key, med_data)
-            time.sleep(WAIT_FOR_SEC)
+            if WAIT_FOR_IT:
+                time.sleep(WAIT_FOR_SEC)
 
 
 class ScYaoMedicine(BaseMedScrape):
@@ -148,31 +154,31 @@ class ScYaoMedicine(BaseMedScrape):
         '''
         url: .?mn=bop&sn=9
         '''
+
         med_info = {}
         url = f'{self.base_url}/{self.med_type}/{url}'
         
-        
-        self.get_html(url)
-        return
         soup = BeautifulSoup(self.get_html(url), 'html.parser')
         s = soup.find('td', attrs={'class':'content_board'})
         head = s.find('table')
         head = [i.getText() for i in head.find('tr').findAll(('td', 'th'))]
-        
-        med_info.update({head[0]: head[1]})
-        med_info.update({head[3]: head[4]})
-    
-        titles = re.findall(r'【.*?】',  s.text.strip())
-        text_infs = re.split(r'【.*?】', s.text.strip())[1:]
+        med_info.update({head[0]: head[1].split()[0]})
+        try:
+            med_info.update({head[2]: head[3]})
+        except IndexError as e:
+            pass
+        finally:
+            titles = re.findall(r'【.*?】',  s.text.strip())
+            text_infs = re.split(r'【.*?】', s.text.strip())[1:]
 
-        for title, info in zip(titles, text_infs):
-            title = title[1:-1] 
-            if title == '主治':
-                info = info.split('2017')[0] # Exclude an ad..
-            elif title == titles[-1][1:-1]: # strip bottom text
-                info = info.split('頁首')[0].strip()
-            med_info.update({title: info})
-        return med_info
+            for title, info in zip(titles, text_infs):
+                title = title[1:-1] 
+                if title == '主治':
+                    info = info.split('2017')[0] # Exclude an ad..
+                elif title == titles[-1][1:-1]: # strip bottom text
+                    info = info.split('頁首')[0].strip()
+                med_info.update({title: info})
+            return med_info
 
 
     def get_data(self):
@@ -194,24 +200,20 @@ class ScYaoMedicine(BaseMedScrape):
                 WAIT_FOR_THIS = 0
                 for _key, _val in val.items():
                     med_data.update({_key: self.get_med_data(_val)})
-                    print(_key)
-                    import sys
-                    sys.exit()
                     if WAIT_FOR_THIS == 3 and WAIT_FOR_IT:
                         WAIT_FOR_THIS = 0
                         time.sleep(random.randint(20,60))
                     WAIT_FOR_THIS += 1
                 JsonHandler(self.yao_data_file).update(key, med_data)
-            time.sleep(WAIT_FOR_SEC)
+            if WAIT_FOR_IT:
+                time.sleep(WAIT_FOR_SEC)
     
     def test(self):
         print('[Running Test...]')
-        self.get_med_data('.?yno=639')
+        from pprint import pprint
+        pprint(self.get_med_data('.?yno=639'))
         
 
 
 if __name__ == '__main__':
-    # ScFangMedicine().get_data()
-    # ScYaoMedicine().get_data()
-    # ScYaoMedicine().test()
     pass

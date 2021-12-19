@@ -1,1 +1,3 @@
-# Scraping stuff
+# Scraping TCM
+
+> use pipenv
