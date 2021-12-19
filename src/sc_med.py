@@ -1,42 +1,16 @@
 '''
 Data from http://yibian.hopto.org
 '''
-import json
 import re
-import requests
 import random
 import time
 from typing import Dict
 from pathlib import Path
 
+from requests_cache.session import CachedSession
 from bs4 import BeautifulSoup
 
-
-class JsonHandler:
-    '''As the name suggests'''
-    
-    def __init__(self, file: Path) -> None:
-        self.json_file = file
-
-    
-    def read(self) -> dict:
-        if not self.json_file.exists():
-            self.write({})
-        with open(self.json_file, 'r', encoding='utf-8') as f:
-            j = dict(json.loads(f.read()))
-        return j
-    
-    
-    def write(self, data: dict):
-        with open(self.json_file, 'w', encoding='utf-8') as f:
-            json.dump(data, indent=4, sort_keys=True, fp=f, ensure_ascii=False)
-
-    
-    def update(self, key: str, val: any) -> None:
-        '''Shallow update'''
-        data = self.read()
-        data[key] = val
-        self.write(data)
+from .json_handler import JsonHandler
 
 
 class BaseMedScrape:
@@ -49,13 +23,14 @@ class BaseMedScrape:
         self.temp_file = Path('./json/temp.json') # Handy...
         self.med_type = med_type
         self.base_url = 'http://yibian.hopto.org'
+        self._session = CachedSession('http_cache', backend='sqlite')
     
     
-    @staticmethod
-    def get_html(url: str) -> str:
-        with requests.Session() as s:
-            content = s.get(url).content
-        return content
+    def get_html(self, url: str) -> str:
+        html = self._session.get(url)
+        print(html)
+        self._session.close()
+        return html.content
     
 
     def get_bopomofo_links(self, dst: Path) -> None:
@@ -80,10 +55,11 @@ class BaseMedScrape:
         depends on bopomofo links
         scrape medicine links from each bopomofo page.
 
-        bop: bopomofo
-        url: .?mn=bop&sn=9
+        :param bop: bopomofo
+        :param url: .?mn=bop&sn=9
+        :rtype: None
         '''
-        url = f'http://yibian.hopto.org/{self.med_type}/{url}'
+        url = f'{self.base_url}/{self.med_type}/{url}'
         soup = BeautifulSoup(self.get_html(url), 'html.parser')
         a_tag_attr = '?fno' if self.med_type == 'fang' else '?yno'
         links = [link for link in soup.findAll('a') if a_tag_attr in str(link)]
@@ -110,7 +86,7 @@ class ScFangMedicine(BaseMedScrape):
         url: .?mn=bop&sn=9
         '''
         med_info = {}
-        url = f'{self.base_url}/fang/{url}'
+        url = f'{self.base_url}/{self.med_type}/{url}'
         soup = BeautifulSoup(self.get_html(url), 'html.parser')
         s = soup.find('td', attrs={'class':'content_board'})
         head = s.find('table')
@@ -167,9 +143,75 @@ class ScYaoMedicine(BaseMedScrape):
         self.yao_bop_links_file = Path('./json/yao_bop_links.json')
         self.yao_data_file = Path('./json/yao_data.json')
     
+
     def get_med_data(self, url: str) -> Dict[str, str]:
-        pass
+        '''
+        url: .?mn=bop&sn=9
+        '''
+        med_info = {}
+        url = f'{self.base_url}/{self.med_type}/{url}'
+        
+        
+        self.get_html(url)
+        return
+        soup = BeautifulSoup(self.get_html(url), 'html.parser')
+        s = soup.find('td', attrs={'class':'content_board'})
+        head = s.find('table')
+        head = [i.getText() for i in head.find('tr').findAll(('td', 'th'))]
+        
+        med_info.update({head[0]: head[1]})
+        med_info.update({head[3]: head[4]})
+    
+        titles = re.findall(r'【.*?】',  s.text.strip())
+        text_infs = re.split(r'【.*?】', s.text.strip())[1:]
+
+        for title, info in zip(titles, text_infs):
+            title = title[1:-1] 
+            if title == '主治':
+                info = info.split('2017')[0] # Exclude an ad..
+            elif title == titles[-1][1:-1]: # strip bottom text
+                info = info.split('頁首')[0].strip()
+            med_info.update({title: info})
+        return med_info
+
+
+    def get_data(self):
+        '''Run this before you sleep!'''
+        bop_links = JsonHandler(self.yao_bop_links_file).read()
+        if not bop_links: # Empty
+            self.get_bopomofo_links(self.yao_bop_links_file)
+            bop_links = JsonHandler(self.yao_bop_links_file).read()
+        
+        for key, val in bop_links.items():
+            self.get_med_links(self.yao_med_links_file, key, val)
+            time.sleep(3) # ---- Wait a bit
+            WAIT_FOR_IT = True # --- Wait >> Avoid blocking 
+            WAIT_FOR_SEC = 100 # --- Wait
+            l_dict = JsonHandler(self.yao_med_links_file).read()
+
+            for key, val in l_dict.items():
+                med_data = {}
+                WAIT_FOR_THIS = 0
+                for _key, _val in val.items():
+                    med_data.update({_key: self.get_med_data(_val)})
+                    print(_key)
+                    import sys
+                    sys.exit()
+                    if WAIT_FOR_THIS == 3 and WAIT_FOR_IT:
+                        WAIT_FOR_THIS = 0
+                        time.sleep(random.randint(20,60))
+                    WAIT_FOR_THIS += 1
+                JsonHandler(self.yao_data_file).update(key, med_data)
+            time.sleep(WAIT_FOR_SEC)
+    
+    def test(self):
+        print('[Running Test...]')
+        self.get_med_data('.?yno=639')
+        
 
 
 if __name__ == '__main__':
-    ScFangMedicine().get_data()
+    # ScFangMedicine().get_data()
+    # ScYaoMedicine().get_data()
+    # ScYaoMedicine().test()
+    pass
